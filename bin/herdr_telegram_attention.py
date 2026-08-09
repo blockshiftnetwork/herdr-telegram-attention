@@ -73,9 +73,12 @@ def markup(c,i):
     if i["status"]=="resolved": return {"inline_keyboard":[]}
     p=i["id"]; return {"inline_keyboard":[[{"text":title(c,"ack_btn"),"callback_data":f"hta:{p}:ack"},{"text":title(c,"snooze_btn"),"callback_data":f"hta:{p}:snooze"}],[{"text":title(c,"context_btn"),"callback_data":f"hta:{p}:context"}]]}
 def update_message(c,i):
-    data={"chat_id":c["TELEGRAM_CHAT_ID"],"text":render(c,i),"reply_markup":json.dumps(markup(c,i),ensure_ascii=False)}
+    rendered=render(c,i); keyboard=json.dumps(markup(c,i),ensure_ascii=False)
+    if i.get("rendered")==rendered and i.get("keyboard")==keyboard: return
+    data={"chat_id":c["TELEGRAM_CHAT_ID"],"text":rendered,"reply_markup":keyboard}
     if i.get("message_id"): api(c,"editMessageText",{**data,"message_id":i["message_id"]})
     else: i["message_id"]=api(c,"sendMessage",data)["message_id"]
+    i["rendered"]=rendered; i["keyboard"]=keyboard
 
 def handle_event(c,d,dry=False):
     h=lock(); state=load_state(); now=int(time.time())
