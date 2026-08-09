@@ -12,10 +12,37 @@ label, Git branch when available, terminal task title when available, workspace,
 tab, pane, and Herdr-provided reason. They never include terminal output or the
 agent conversation.
 
+## Quick start
+
+1. Install the public plugin:
+
+   ```bash
+   herdr plugin install blockshiftnetwork/herdr-telegram-attention
+   ```
+
+2. Follow [Configure securely](#configure-securely) below to add your bot token
+   and chat ID outside the checkout.
+3. Start the dispatcher once to enable the Telegram buttons:
+
+   ```bash
+   herdr plugin pane open --plugin blockshiftnetwork.telegram-attention \
+     --entrypoint dispatcher --placement tab --no-focus
+   ```
+
+4. Verify configuration without sending a message:
+
+   ```bash
+   herdr plugin action invoke blockshiftnetwork.telegram-attention.status
+   ```
+
+Use the `test` action only when you intentionally want Telegram to send a test
+message. The dispatcher runs in its own unfocused Herdr tab; it does not stop
+or restart agent panes.
+
 ## Requirements
 
 - Herdr 0.8.0 or newer
-- `bash`, `python3`, and `curl`
+- `bash` and `python3`
 - A Telegram bot token and a chat ID. Start a conversation with the bot before
   testing it, otherwise Telegram rejects direct messages.
 
