@@ -1,0 +1,4 @@
+# Private Herdr plugin configuration. Never commit bot credentials.
+.env
+state/
+.herdr-plugin/

@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# Herdr Telegram Attention Alerts. Requires bash, python3, and curl.
+set -euo pipefail
+
+readonly PLUGIN_ID="blockshiftnetwork.telegram-attention"
+readonly DEFAULT_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/${PLUGIN_ID}"
+readonly CONFIG_DIR="${HERDR_PLUGIN_CONFIG_DIR:-$DEFAULT_CONFIG_DIR}"
+readonly CONFIG_FILE="${CONFIG_DIR}/.env"
+readonly STATE_FILE="${HERDR_PLUGIN_STATE_DIR:-${CONFIG_DIR}/state}/sent-events"
+
+# Explicit process environment takes precedence over the persistent config. It
+# keeps testing and one-off overrides possible without editing credentials.
+ENV_TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN-}"
+ENV_TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID-}"
+ENV_TELEGRAM_LANGUAGE="${TELEGRAM_LANGUAGE-}"
+ENV_TELEGRAM_NOTIFY_DONE="${TELEGRAM_NOTIFY_DONE-}"
+ENV_TELEGRAM_API_BASE="${TELEGRAM_API_BASE-}"
+
+TELEGRAM_BOT_TOKEN="${ENV_TELEGRAM_BOT_TOKEN}"
+TELEGRAM_CHAT_ID="${ENV_TELEGRAM_CHAT_ID}"
+TELEGRAM_LANGUAGE="${ENV_TELEGRAM_LANGUAGE:-es}"
+TELEGRAM_NOTIFY_DONE="${ENV_TELEGRAM_NOTIFY_DONE:-false}"
+TELEGRAM_API_BASE="${ENV_TELEGRAM_API_BASE:-https://api.telegram.org}"
+
+usage() {
+  cat <<'EOF'
+Usage: herdr-telegram-attention --event|--test|--status [--dry-run]
+
+Configuration is read from $HERDR_PLUGIN_CONFIG_DIR/.env (or the documented
+fallback configuration path). Supported keys: TELEGRAM_BOT_TOKEN,
+TELEGRAM_CHAT_ID, TELEGRAM_LANGUAGE (en, es, pt), TELEGRAM_NOTIFY_DONE, and
+TELEGRAM_API_BASE.
+EOF
+}
+
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+load_config() {
+  [[ -f "$CONFIG_FILE" ]] || return 0
+
+  local key value line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="$(trim "$line")"
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+    key="$(trim "${line%%=*}")"
+    value="$(trim "${line#*=}")"
+    case "$key" in
+      TELEGRAM_BOT_TOKEN) TELEGRAM_BOT_TOKEN="$value" ;;
+      TELEGRAM_CHAT_ID) TELEGRAM_CHAT_ID="$value" ;;
+      TELEGRAM_LANGUAGE) TELEGRAM_LANGUAGE="$value" ;;
+      TELEGRAM_NOTIFY_DONE) TELEGRAM_NOTIFY_DONE="$value" ;;
+      TELEGRAM_API_BASE) TELEGRAM_API_BASE="$value" ;;
+    esac
+  done < "$CONFIG_FILE"
+}
+
+apply_environment_overrides() {
+  [[ -n "$ENV_TELEGRAM_BOT_TOKEN" ]] && TELEGRAM_BOT_TOKEN="$ENV_TELEGRAM_BOT_TOKEN"
+  [[ -n "$ENV_TELEGRAM_CHAT_ID" ]] && TELEGRAM_CHAT_ID="$ENV_TELEGRAM_CHAT_ID"
+  [[ -n "$ENV_TELEGRAM_LANGUAGE" ]] && TELEGRAM_LANGUAGE="$ENV_TELEGRAM_LANGUAGE"
+  [[ -n "$ENV_TELEGRAM_NOTIFY_DONE" ]] && TELEGRAM_NOTIFY_DONE="$ENV_TELEGRAM_NOTIFY_DONE"
+  [[ -n "$ENV_TELEGRAM_API_BASE" ]] && TELEGRAM_API_BASE="$ENV_TELEGRAM_API_BASE"
+  return 0
+}
+
+require_configuration() {
+  if [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
+    printf 'Telegram is not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to %s\n' "$CONFIG_FILE" >&2
+    exit 1
+  fi
+}
+
+localized() {
+  local key="$1"
+  case "${TELEGRAM_LANGUAGE,,}:$key" in
+    en:title_blocked) printf '%s' 'Herdr: agent needs attention' ;;
+    en:title_done) printf '%s' 'Herdr: agent finished' ;;
+    en:test_title) printf '%s' 'Herdr: Telegram is connected' ;;
+    en:test_body) printf '%s' 'You will receive alerts when an agent needs your attention.' ;;
+    en:state) printf '%s' 'State' ;;
+    en:agent) printf '%s' 'Agent' ;;
+    en:workspace) printf '%s' 'Workspace' ;;
+    en:tab) printf '%s' 'Tab' ;;
+    en:pane) printf '%s' 'Pane' ;;
+    es:title_blocked) printf '%s' 'Herdr: un agente requiere tu atención' ;;
+    es:title_done) printf '%s' 'Herdr: un agente terminó' ;;
+    es:test_title) printf '%s' 'Herdr: Telegram está conectado' ;;
+    es:test_body) printf '%s' 'Recibirás alertas cuando un agente requiera tu atención.' ;;
+    es:state) printf '%s' 'Estado' ;;
+    es:agent) printf '%s' 'Agente' ;;
+    es:workspace) printf '%s' 'Espacio de trabajo' ;;
+    es:tab) printf '%s' 'Pestaña' ;;
+    es:pane) printf '%s' 'Panel' ;;
+    pt:title_blocked) printf '%s' 'Herdr: um agente precisa da sua atenção' ;;
+    pt:title_done) printf '%s' 'Herdr: agente concluído' ;;
+    pt:test_title) printf '%s' 'Herdr: Telegram conectado' ;;
+    pt:test_body) printf '%s' 'Você receberá alertas quando um agente precisar da sua atenção.' ;;
+    pt:state) printf '%s' 'Estado' ;;
+    pt:agent) printf '%s' 'Agente' ;;
+    pt:workspace) printf '%s' 'Espaço de trabalho' ;;
+    pt:tab) printf '%s' 'Aba' ;;
+    pt:pane) printf '%s' 'Painel' ;;
+    *) printf '%s' "$key" ;;
+  esac
+}
+
+send_message() {
+  local title="$1" body="$2" dry_run="$3"
+  local text
+  text="${title}"$'\n'"${body}"
+
+  if [[ "$dry_run" == true ]]; then
+    printf '%s\n' "$text"
+    return 0
+  fi
+
+  require_configuration
+  curl --fail --silent --show-error --max-time 15 \
+    --request POST "${TELEGRAM_API_BASE%/}/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+    --data-urlencode "text=${text}" \
+    --data-urlencode "disable_web_page_preview=true" >/dev/null
+}
+
+event_fields() {
+  python3 -c '
+import json, os
+
+data = json.loads(os.environ["HERDR_PLUGIN_EVENT_JSON"])
+sources = [data]
+for name in ("event", "payload", "data", "pane"):
+    value = data.get(name)
+    if isinstance(value, dict):
+        sources.append(value)
+
+def get(*names):
+    for source in sources:
+        for name in names:
+            value = source.get(name)
+            if value not in (None, ""):
+                return str(value)
+    return ""
+
+print("\x1f".join((
+    get("agent_status", "status", "state"),
+    get("agent", "agent_name", "display_agent"),
+    get("workspace_id", "workspace"),
+    get("tab_id", "tab"),
+    get("pane_id", "pane"),
+    get("message", "reason"),
+    get("state_change_seq", "revision", "sequence"),
+)))
+'
+}
+
+build_event_body() {
+  local state="$1" agent="$2" workspace="$3" tab="$4" pane="$5" message="$6"
+  local body="$(localized state): ${state}"
+  [[ -n "$agent" ]] && body+=$'\n'"$(localized agent): ${agent}"
+  [[ -n "$workspace" ]] && body+=$'\n'"$(localized workspace): ${workspace}"
+  [[ -n "$tab" ]] && body+=$'\n'"$(localized tab): ${tab}"
+  [[ -n "$pane" ]] && body+=$'\n'"$(localized pane): ${pane}"
+  [[ -n "$message" ]] && body+=$'\n'"${message}"
+  printf '%s' "$body"
+}
+
+already_sent() {
+  local fingerprint="$1"
+  [[ -f "$STATE_FILE" ]] && grep -Fqx -- "$fingerprint" "$STATE_FILE"
+}
+
+remember_sent() {
+  local fingerprint="$1"
+  mkdir -p "$(dirname "$STATE_FILE")"
+  (umask 077; printf '%s\n' "$fingerprint" >> "$STATE_FILE")
+}
+
+handle_event() {
+  local dry_run="$1"
+  : "${HERDR_PLUGIN_EVENT_JSON:?HERDR_PLUGIN_EVENT_JSON is required for --event}"
+  local fields state agent workspace tab pane message sequence title body fingerprint
+  fields="$(event_fields)"
+  IFS=$'\x1f' read -r state agent workspace tab pane message sequence <<< "$fields"
+
+  case "$state" in
+    blocked) title="$(localized title_blocked)" ;;
+    done)
+      [[ "${TELEGRAM_NOTIFY_DONE,,}" == "true" ]] || return 0
+      title="$(localized title_done)"
+      ;;
+    *) return 0 ;;
+  esac
+
+  fingerprint="${pane}|${state}|${sequence}"
+  [[ -n "$sequence" && "$dry_run" != true ]] && already_sent "$fingerprint" && return 0
+  body="$(build_event_body "$state" "$agent" "$workspace" "$tab" "$pane" "$message")"
+  send_message "$title" "$body" "$dry_run"
+  [[ -n "$sequence" && "$dry_run" != true ]] && remember_sent "$fingerprint"
+  return 0
+}
+
+main() {
+  local action="" dry_run=false
+  while (($#)); do
+    case "$1" in
+      --event|--test|--status) action="$1" ;;
+      --dry-run) dry_run=true ;;
+      --help|-h) usage; return 0 ;;
+      *) usage >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  [[ -n "$action" ]] || { usage >&2; return 2; }
+  load_config
+  apply_environment_overrides
+  case "${TELEGRAM_LANGUAGE,,}" in
+    en|es|pt) ;;
+    *) TELEGRAM_LANGUAGE=es ;;
+  esac
+  case "$action" in
+    --event) handle_event "$dry_run" ;;
+    --test) send_message "$(localized test_title)" "$(localized test_body)" "$dry_run" ;;
+    --status)
+      printf 'plugin_id=%s\nconfig_file=%s\nconfigured=%s\nlanguage=%s\nnotify_done=%s\n' \
+        "$PLUGIN_ID" "$CONFIG_FILE" "$([[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" ]] && printf true || printf false)" \
+        "$TELEGRAM_LANGUAGE" "$TELEGRAM_NOTIFY_DONE"
+      ;;
+  esac
+}
+
+main "$@"
