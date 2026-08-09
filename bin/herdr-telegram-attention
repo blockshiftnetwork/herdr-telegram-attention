@@ -15,12 +15,16 @@ ENV_TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID-}"
 ENV_TELEGRAM_LANGUAGE="${TELEGRAM_LANGUAGE-}"
 ENV_TELEGRAM_NOTIFY_DONE="${TELEGRAM_NOTIFY_DONE-}"
 ENV_TELEGRAM_API_BASE="${TELEGRAM_API_BASE-}"
+ENV_TELEGRAM_INCLUDE_GIT="${TELEGRAM_INCLUDE_GIT-}"
+ENV_TELEGRAM_INCLUDE_TITLE="${TELEGRAM_INCLUDE_TITLE-}"
 
 TELEGRAM_BOT_TOKEN="${ENV_TELEGRAM_BOT_TOKEN}"
 TELEGRAM_CHAT_ID="${ENV_TELEGRAM_CHAT_ID}"
 TELEGRAM_LANGUAGE="${ENV_TELEGRAM_LANGUAGE:-es}"
 TELEGRAM_NOTIFY_DONE="${ENV_TELEGRAM_NOTIFY_DONE:-false}"
 TELEGRAM_API_BASE="${ENV_TELEGRAM_API_BASE:-https://api.telegram.org}"
+TELEGRAM_INCLUDE_GIT="${ENV_TELEGRAM_INCLUDE_GIT:-true}"
+TELEGRAM_INCLUDE_TITLE="${ENV_TELEGRAM_INCLUDE_TITLE:-true}"
 
 usage() {
   cat <<'EOF'
@@ -55,6 +59,8 @@ load_config() {
       TELEGRAM_LANGUAGE) TELEGRAM_LANGUAGE="$value" ;;
       TELEGRAM_NOTIFY_DONE) TELEGRAM_NOTIFY_DONE="$value" ;;
       TELEGRAM_API_BASE) TELEGRAM_API_BASE="$value" ;;
+      TELEGRAM_INCLUDE_GIT) TELEGRAM_INCLUDE_GIT="$value" ;;
+      TELEGRAM_INCLUDE_TITLE) TELEGRAM_INCLUDE_TITLE="$value" ;;
     esac
   done < "$CONFIG_FILE"
 }
@@ -65,6 +71,8 @@ apply_environment_overrides() {
   [[ -n "$ENV_TELEGRAM_LANGUAGE" ]] && TELEGRAM_LANGUAGE="$ENV_TELEGRAM_LANGUAGE"
   [[ -n "$ENV_TELEGRAM_NOTIFY_DONE" ]] && TELEGRAM_NOTIFY_DONE="$ENV_TELEGRAM_NOTIFY_DONE"
   [[ -n "$ENV_TELEGRAM_API_BASE" ]] && TELEGRAM_API_BASE="$ENV_TELEGRAM_API_BASE"
+  [[ -n "$ENV_TELEGRAM_INCLUDE_GIT" ]] && TELEGRAM_INCLUDE_GIT="$ENV_TELEGRAM_INCLUDE_GIT"
+  [[ -n "$ENV_TELEGRAM_INCLUDE_TITLE" ]] && TELEGRAM_INCLUDE_TITLE="$ENV_TELEGRAM_INCLUDE_TITLE"
   return 0
 }
 
@@ -87,6 +95,9 @@ localized() {
     en:workspace) printf '%s' 'Workspace' ;;
     en:tab) printf '%s' 'Tab' ;;
     en:pane) printf '%s' 'Pane' ;;
+    en:project) printf '%s' 'Project' ;;
+    en:branch) printf '%s' 'Branch' ;;
+    en:task) printf '%s' 'Task' ;;
     es:title_blocked) printf '%s' 'Herdr: un agente requiere tu atención' ;;
     es:title_done) printf '%s' 'Herdr: un agente terminó' ;;
     es:test_title) printf '%s' 'Herdr: Telegram está conectado' ;;
@@ -96,6 +107,9 @@ localized() {
     es:workspace) printf '%s' 'Espacio de trabajo' ;;
     es:tab) printf '%s' 'Pestaña' ;;
     es:pane) printf '%s' 'Panel' ;;
+    es:project) printf '%s' 'Proyecto' ;;
+    es:branch) printf '%s' 'Rama' ;;
+    es:task) printf '%s' 'Tarea' ;;
     pt:title_blocked) printf '%s' 'Herdr: um agente precisa da sua atenção' ;;
     pt:title_done) printf '%s' 'Herdr: agente concluído' ;;
     pt:test_title) printf '%s' 'Herdr: Telegram conectado' ;;
@@ -105,6 +119,9 @@ localized() {
     pt:workspace) printf '%s' 'Espaço de trabalho' ;;
     pt:tab) printf '%s' 'Aba' ;;
     pt:pane) printf '%s' 'Painel' ;;
+    pt:project) printf '%s' 'Projeto' ;;
+    pt:branch) printf '%s' 'Branch' ;;
+    pt:task) printf '%s' 'Tarefa' ;;
     *) printf '%s' "$key" ;;
   esac
 }
@@ -132,11 +149,20 @@ event_fields() {
 import json, os
 
 data = json.loads(os.environ["HERDR_PLUGIN_EVENT_JSON"])
-sources = [data]
-for name in ("event", "payload", "data", "pane"):
-    value = data.get(name)
-    if isinstance(value, dict):
-        sources.append(value)
+try:
+    context = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON", "{}"))
+except json.JSONDecodeError:
+    context = {}
+
+sources = []
+for root in (data, context):
+    if not isinstance(root, dict):
+        continue
+    sources.append(root)
+    for name in ("event", "payload", "data", "pane"):
+        value = root.get(name)
+        if isinstance(value, dict):
+            sources.append(value)
 
 def get(*names):
     for source in sources:
@@ -154,18 +180,41 @@ print("\x1f".join((
     get("pane_id", "pane"),
     get("message", "reason"),
     get("state_change_seq", "revision", "sequence"),
+    get("workspace_label", "project", "workspace_name"),
+    get("foreground_cwd", "workspace_cwd", "cwd"),
+    get("terminal_title_stripped", "terminal_title", "title"),
 )))
 '
 }
 
+git_branch() {
+  local cwd="$1"
+  [[ "${TELEGRAM_INCLUDE_GIT,,}" == true && -n "$cwd" && -d "$cwd" ]] || return 0
+  git -C "$cwd" branch --show-current 2>/dev/null || true
+}
+
+single_line() {
+  local value="$1"
+  value="${value//$'\r'/ }"
+  value="${value//$'\n'/ }"
+  printf '%s' "$value"
+}
+
 build_event_body() {
-  local state="$1" agent="$2" workspace="$3" tab="$4" pane="$5" message="$6"
+  local state="$1" agent="$2" workspace="$3" tab="$4" pane="$5" message="$6" project="$7" branch="$8" task="$9"
   local body="$(localized state): ${state}"
   [[ -n "$agent" ]] && body+=$'\n'"$(localized agent): ${agent}"
-  [[ -n "$workspace" ]] && body+=$'\n'"$(localized workspace): ${workspace}"
+  if [[ -n "$project" ]]; then
+    [[ -n "$workspace" && "$workspace" != "$project" ]] && project+=" (${workspace})"
+    body+=$'\n'"$(localized project): ${project}"
+  elif [[ -n "$workspace" ]]; then
+    body+=$'\n'"$(localized workspace): ${workspace}"
+  fi
+  [[ -n "$branch" ]] && body+=$'\n'"$(localized branch): ${branch}"
+  [[ "${TELEGRAM_INCLUDE_TITLE,,}" == true && -n "$task" ]] && body+=$'\n'"$(localized task): $(single_line "$task")"
   [[ -n "$tab" ]] && body+=$'\n'"$(localized tab): ${tab}"
   [[ -n "$pane" ]] && body+=$'\n'"$(localized pane): ${pane}"
-  [[ -n "$message" ]] && body+=$'\n'"${message}"
+  [[ -n "$message" ]] && body+=$'\n'"$(single_line "$message")"
   printf '%s' "$body"
 }
 
@@ -183,9 +232,9 @@ remember_sent() {
 handle_event() {
   local dry_run="$1"
   : "${HERDR_PLUGIN_EVENT_JSON:?HERDR_PLUGIN_EVENT_JSON is required for --event}"
-  local fields state agent workspace tab pane message sequence title body fingerprint
+  local fields state agent workspace tab pane message sequence project cwd task branch title body fingerprint
   fields="$(event_fields)"
-  IFS=$'\x1f' read -r state agent workspace tab pane message sequence <<< "$fields"
+  IFS=$'\x1f' read -r state agent workspace tab pane message sequence project cwd task <<< "$fields"
 
   case "$state" in
     blocked) title="$(localized title_blocked)" ;;
@@ -198,7 +247,8 @@ handle_event() {
 
   fingerprint="${pane}|${state}|${sequence}"
   [[ -n "$sequence" && "$dry_run" != true ]] && already_sent "$fingerprint" && return 0
-  body="$(build_event_body "$state" "$agent" "$workspace" "$tab" "$pane" "$message")"
+  branch="$(git_branch "$cwd")"
+  body="$(build_event_body "$state" "$agent" "$workspace" "$tab" "$pane" "$message" "$project" "$branch" "$task")"
   send_message "$title" "$body" "$dry_run"
   [[ -n "$sequence" && "$dry_run" != true ]] && remember_sent "$fingerprint"
   return 0
@@ -227,9 +277,9 @@ main() {
     --event) handle_event "$dry_run" ;;
     --test) send_message "$(localized test_title)" "$(localized test_body)" "$dry_run" ;;
     --status)
-      printf 'plugin_id=%s\nconfig_file=%s\nconfigured=%s\nlanguage=%s\nnotify_done=%s\n' \
+      printf 'plugin_id=%s\nconfig_file=%s\nconfigured=%s\nlanguage=%s\nnotify_done=%s\ninclude_git=%s\ninclude_title=%s\n' \
         "$PLUGIN_ID" "$CONFIG_FILE" "$([[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" ]] && printf true || printf false)" \
-        "$TELEGRAM_LANGUAGE" "$TELEGRAM_NOTIFY_DONE"
+        "$TELEGRAM_LANGUAGE" "$TELEGRAM_NOTIFY_DONE" "$TELEGRAM_INCLUDE_GIT" "$TELEGRAM_INCLUDE_TITLE"
       ;;
   esac
 }

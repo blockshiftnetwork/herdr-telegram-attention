@@ -1,6 +1,6 @@
 id = "blockshiftnetwork.telegram-attention"
 name = "Telegram Attention Alerts"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.8.0"
 description = "Sends multilingual Telegram alerts when a Herdr agent needs attention."
 platforms = ["linux", "macos"]

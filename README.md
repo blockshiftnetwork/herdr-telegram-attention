@@ -7,7 +7,10 @@ session restart is involved.
 
 Messages are available in Spanish (`es`), English (`en`), and Portuguese
 (`pt`). Spanish is the default. Finished-agent messages are disabled by
-default to avoid notification noise.
+default to avoid notification noise. Blocked alerts include the agent, project
+label, Git branch when available, terminal task title when available, workspace,
+tab, pane, and Herdr-provided reason. They never include terminal output or the
+agent conversation.
 
 ## Requirements
 
@@ -46,6 +49,9 @@ TELEGRAM_CHAT_ID=replace-with-your-chat-id
 TELEGRAM_LANGUAGE=es
 # Set true only if you also want a message when an agent is done.
 TELEGRAM_NOTIFY_DONE=false
+# Both are enabled by default. Set false to reduce alert context.
+TELEGRAM_INCLUDE_GIT=true
+TELEGRAM_INCLUDE_TITLE=true
 EOF
 chmod 600 "$config_dir/.env"
 ```
