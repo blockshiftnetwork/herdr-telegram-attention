@@ -6,6 +6,9 @@ PLUGIN_ID = "blockshiftnetwork.telegram-attention"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG = pathlib.Path(os.getenv("HERDR_PLUGIN_CONFIG_DIR", pathlib.Path.home()/".config/herdr/plugins/config"/PLUGIN_ID)) / ".env"
 STATE_DIR = pathlib.Path(os.getenv("HERDR_PLUGIN_STATE_DIR", CONFIG.parent/"state")); STATE = STATE_DIR / "incidents.json"
+MAX_FIELD_LENGTH = 512
+MAX_INCIDENTS = 200
+RESOLVED_TTL_SECONDS = 7 * 24 * 60 * 60
 
 TEXT = {
  "es": {"blocked":"Herdr: requiere tu atención", "critical":"🔴 Crítica", "high":"🟠 Alta", "normal":"🟡 Decisión", "ack":"Reconocido", "snooze":"Pospuesto", "resolved":"✅ Resuelto", "agents":"agentes bloqueados", "agent":"Agente", "project":"Proyecto", "branch":"Rama", "task":"Tarea", "reason":"Motivo", "context":"Contexto", "ack_btn":"✅ Reconocer", "snooze_btn":"⏰ Posponer 30m", "context_btn":"ℹ️ Contexto", "test":"Herdr: Telegram está conectado", "test_body":"Recibirás alertas cuando un agente requiera tu atención."},
@@ -26,7 +29,11 @@ def config():
 def api(c, method, data):
     token=c.get("TELEGRAM_BOT_TOKEN", "");
     if not token: raise RuntimeError("Telegram is not configured")
-    url=f"{c.get('TELEGRAM_API_BASE','https://api.telegram.org').rstrip('/')}/bot{token}/{method}"
+    base=c.get('TELEGRAM_API_BASE','https://api.telegram.org').rstrip('/')
+    parsed=urllib.parse.urlparse(base)
+    if parsed.scheme != "https" or parsed.hostname != "api.telegram.org" or parsed.port or parsed.username or parsed.password:
+        raise RuntimeError("TELEGRAM_API_BASE must be exactly https://api.telegram.org")
+    url=f"{base}/bot{token}/{method}"
     request=urllib.request.Request(url, urllib.parse.urlencode(data).encode(), method="POST")
     with urllib.request.urlopen(request, timeout=35) as r: payload=json.load(r)
     if not payload.get("ok"): raise RuntimeError(payload.get("description", "Telegram request failed"))
@@ -42,6 +49,17 @@ def save_state(state):
 def lock():
     STATE_DIR.mkdir(parents=True, exist_ok=True); p=STATE_DIR/".lock"; h=open(p,"a+"); fcntl.flock(h,fcntl.LOCK_EX); return h
 
+def prune_state(state, now):
+    incidents=state["incidents"]
+    for iid, incident in list(incidents.items()):
+        if incident.get("status") == "resolved" and now - incident.get("updated", incident.get("created", now)) > RESOLVED_TTL_SECONDS:
+            del incidents[iid]
+    if len(incidents) > MAX_INCIDENTS:
+        resolved=sorted((i.get("updated", i.get("created", 0)), iid) for iid,i in incidents.items() if i.get("status") == "resolved")
+        for _, iid in resolved:
+            if len(incidents) <= MAX_INCIDENTS: break
+            del incidents[iid]
+
 def event_data():
     e=json.loads(os.environ["HERDR_PLUGIN_EVENT_JSON"]); ctx=json.loads(os.getenv("HERDR_PLUGIN_CONTEXT_JSON","{}"))
     sources=[]
@@ -51,7 +69,7 @@ def event_data():
     def get(*keys):
         for s in sources:
             for k in keys:
-                if s.get(k) not in (None,""): return str(s[k])
+                if s.get(k) not in (None,""): return str(s[k])[:MAX_FIELD_LENGTH]
         return ""
     return {"state":get("agent_status","status","state"),"agent":get("agent","agent_name","display_agent"),"workspace":get("workspace_id","workspace"),"tab":get("tab_id","tab"),"pane":get("pane_id","pane"),"reason":get("message","reason"),"seq":get("state_change_seq","revision","sequence"),"project":get("workspace_label","project","workspace_name"),"cwd":get("foreground_cwd","workspace_cwd","cwd"),"task":get("terminal_title_stripped","terminal_title","title")}
 def branch(cwd):
@@ -81,15 +99,18 @@ def update_message(c,i):
     i["rendered"]=rendered; i["keyboard"]=keyboard
 
 def handle_event(c,d,dry=False):
-    h=lock(); state=load_state(); now=int(time.time())
+    h=lock(); state=load_state(); now=int(time.time()); prune_state(state, now)
     if d["state"]=="blocked":
         reason=re.sub(r"\s+"," ",d["reason"].lower()).strip(); key=hashlib.sha256(f"{d['workspace']}|{reason or d['pane']}".encode()).hexdigest()[:16]
         i=next((x for x in state["incidents"].values() if x["key"]==key and x["status"]!="resolved"),None)
         if not i:
+            if len(state["incidents"]) >= MAX_INCIDENTS:
+                raise RuntimeError("incident state limit reached; resolve or prune existing incidents")
             iid=uuid.uuid4().hex[:12]; i={"id":iid,"key":key,"status":"pending","priority":priority(" ".join(d.values())),"created":now,"agents":{},"message_id":None}; state["incidents"][iid]=i
         d["branch"]=branch(d["cwd"]) if d["cwd"] else ""; i["agents"][d["pane"]]=d
         for k in ("project","branch","task","reason"):
             i[k]=d.get(k,"") or i.get(k,"")
+        i["updated"]=now
         if dry: print(render(c,i))
         else: update_message(c,i); save_state(state)
     elif d["pane"]:
@@ -97,6 +118,7 @@ def handle_event(c,d,dry=False):
             if d["pane"] in i["agents"] and i["status"]!="resolved":
                 del i["agents"][d["pane"]]
                 if not i["agents"]: i["status"]="resolved"
+                i["updated"]=now
                 if not dry: update_message(c,i); save_state(state)
     h.close()
 
@@ -105,10 +127,10 @@ def callback(c,q):
     if chat != str(c.get("TELEGRAM_CHAT_ID")): return api(c,"answerCallbackQuery",{"callback_query_id":q["id"],"text":"Unauthorized","show_alert":"true"})
     m=re.fullmatch(r"hta:([0-9a-f]{12}):(ack|snooze|context)",data)
     if not m: return api(c,"answerCallbackQuery",{"callback_query_id":q["id"]})
-    h=lock(); state=load_state(); i=state["incidents"].get(m.group(1)); action=m.group(2)
+    h=lock(); state=load_state(); now=int(time.time()); prune_state(state, now); i=state["incidents"].get(m.group(1)); action=m.group(2)
     if not i: return api(c,"answerCallbackQuery",{"callback_query_id":q["id"],"text":"Incident expired"})
-    if action=="ack": i["status"]="acknowledged"; notice=title(c,"ack")
-    elif action=="snooze": i["status"]="snoozed"; i["snoozed_until"]=int(time.time())+60*int(c.get("TELEGRAM_SNOOZE_MINUTES","30")); notice=title(c,"snooze")
+    if action=="ack": i["status"]="acknowledged"; i["updated"]=now; notice=title(c,"ack")
+    elif action=="snooze": i["status"]="snoozed"; i["updated"]=now; i["snoozed_until"]=now+60*int(c.get("TELEGRAM_SNOOZE_MINUTES","30")); notice=title(c,"snooze")
     else: notice=" · ".join(a["agent"] or a["pane"] for a in i["agents"].values())[:180]
     if action!="context": update_message(c,i); save_state(state)
     api(c,"answerCallbackQuery",{"callback_query_id":q["id"],"text":notice}); h.close()

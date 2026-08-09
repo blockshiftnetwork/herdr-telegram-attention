@@ -56,8 +56,10 @@ EOF
 chmod 600 "$config_dir/.env"
 ```
 
-The parser accepts only the listed `KEY=value` entries; it does not execute
-the configuration file as shell code.
+The parser accepts only `KEY=value` entries; it does not execute the
+configuration file as shell code. Do not set `TELEGRAM_API_BASE` in production:
+the plugin only accepts `https://api.telegram.org`, so the bot token cannot be
+sent to a custom or cleartext endpoint.
 
 ## Test and operate
 
@@ -91,8 +93,11 @@ herdr plugin pane open --plugin blockshiftnetwork.telegram-attention \
 
 - The repository contains no token or chat ID.
 - Credentials live only in the private plugin config directory with mode `600`.
-- Telegram requests use HTTPS, a 15-second timeout, URL-encoded fields, and do
+- Telegram requests enforce the official HTTPS Telegram endpoint, use a timeout,
+  URL-encoded fields, and do
   not write the token to plugin logs.
+- Incident fields are size-limited; resolved incidents expire after seven days
+  and the local state holds at most 200 incidents.
 - Alert content is limited to Herdr-provided agent, workspace, tab, pane, state,
   and optional status message.
 
