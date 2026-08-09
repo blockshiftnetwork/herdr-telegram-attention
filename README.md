@@ -72,6 +72,21 @@ and `unknown`. A `done` alert is sent only when `TELEGRAM_NOTIFY_DONE=true`.
 The plugin deduplicates repeated status notifications with the same Herdr pane,
 state, and sequence number.
 
+## Attention control plane
+
+Version 0.3 groups agents blocked by the same project and reason into one
+priority-ranked incident. Its inline buttons acknowledge an incident, snooze it
+for 30 minutes, or show the affected agents. Callback processing is restricted
+to the configured chat ID.
+
+Start the local callback dispatcher once; it runs in a separate Herdr tab and
+does not affect existing agent panes:
+
+```bash
+herdr plugin pane open --plugin blockshiftnetwork.telegram-attention \
+  --entrypoint dispatcher --placement tab --no-focus
+```
+
 ## Privacy and security
 
 - The repository contains no token or chat ID.

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Herdr Telegram Attention Alerts. Requires bash, python3, and curl.
+# Thin stable entrypoint; the implementation uses only Python's standard library.
 set -euo pipefail
+exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/herdr_telegram_attention.py" "$@"
+
+: <<'LEGACY_IMPLEMENTATION'
 
 readonly PLUGIN_ID="blockshiftnetwork.telegram-attention"
 readonly DEFAULT_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/${PLUGIN_ID}"
@@ -285,3 +288,4 @@ main() {
 }
 
 main "$@"
+LEGACY_IMPLEMENTATION
