@@ -2,3 +2,5 @@
 .env
 state/
 .herdr-plugin/
+__pycache__/
+*.py[cod]
