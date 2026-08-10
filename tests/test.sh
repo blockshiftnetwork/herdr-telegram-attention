@@ -23,11 +23,20 @@ test_spanish_blocked_event() {
   assert_contains "$output" 'Tarea: Approve deployment'
 }
 
-test_non_blocked_event_is_silent() {
+test_done_event_creates_availability_message() {
   local output
   output="$(HERDR_PLUGIN_EVENT_JSON='{"pane_id":"w1:p2","agent":"claude","agent_status":"done","state_change_seq":43}' \
-    TELEGRAM_LANGUAGE=en TELEGRAM_NOTIFY_DONE=true "$PLUGIN" --event --dry-run)"
-  [[ -z "$output" ]] || { printf 'Done event must not create an attention incident\n' >&2; exit 1; }
+    HERDR_PLUGIN_CONTEXT_JSON='{"workspace_label":"api","terminal_title_stripped":"Review release"}' \
+    TELEGRAM_LANGUAGE=en "$PLUGIN" --event --dry-run)"
+  assert_contains "$output" 'Agents available'
+  assert_contains "$output" 'Pane: w1:p2'
+}
+
+test_done_event_can_be_disabled() {
+  local output
+  output="$(HERDR_PLUGIN_EVENT_JSON='{"pane_id":"w1:p2","agent":"claude","agent_status":"done","state_change_seq":43}' \
+    TELEGRAM_NOTIFY_AVAILABLE=false "$PLUGIN" --event --dry-run)"
+  [[ -z "$output" ]] || { printf 'Disabled availability must be silent\n' >&2; exit 1; }
 }
 
 test_unhandled_state_is_silent() {
@@ -37,7 +46,8 @@ test_unhandled_state_is_silent() {
 }
 
 test_spanish_blocked_event
-test_non_blocked_event_is_silent
+test_done_event_creates_availability_message
+test_done_event_can_be_disabled
 test_unhandled_state_is_silent
-python3 "$ROOT/tests/test_goal_lifecycle.py"
+python3 "$ROOT/tests/test_availability_lifecycle.py"
 printf 'All tests passed.\n'

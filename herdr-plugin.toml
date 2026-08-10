@@ -1,6 +1,6 @@
 id = "blockshiftnetwork.telegram-attention"
 name = "Telegram Attention Alerts"
-version = "0.4.0"
+version = "0.5.0"
 min_herdr_version = "0.8.0"
 description = "Sends multilingual Telegram alerts when a Herdr agent needs attention."
 platforms = ["linux", "macos"]
@@ -16,12 +16,6 @@ id = "status"
 title = "Show Telegram alert configuration status"
 contexts = ["global", "workspace", "tab", "pane"]
 command = ["bash", "bin/herdr-telegram-attention", "--status"]
-
-[[actions]]
-id = "register-goal"
-title = "Register goal for focused agent"
-contexts = ["pane"]
-command = ["bash", "bin/herdr-telegram-attention", "--goal-register"]
 
 [[events]]
 on = "pane.agent_status_changed"
