@@ -264,6 +264,8 @@ def availability_status(c):
 def main():
     c=config(); arg=sys.argv[1] if len(sys.argv)>1 else "--help"
     if arg=="--event": handle_event(c,event_data(),"--dry-run" in sys.argv)
+    elif arg in ("--goal-register", "--goal-report"):
+        print("Managed goal reporting has been retired; no Telegram message or agent prompt was sent.")
     elif arg=="--test": api(c,"sendMessage",{"chat_id":c["TELEGRAM_CHAT_ID"],"text":title(c,"test")+"\n"+title(c,"test_body")})
     elif arg=="--status": availability_status(c)
     elif arg=="--listen": listen(c)

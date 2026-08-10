@@ -144,6 +144,9 @@ herdr plugin pane open --plugin blockshiftnetwork/herdr-telegram-attention \
   --entrypoint dispatcher --placement tab --no-focus
 ```
 
+If an agent received an old managed-goal command before upgrading, that command
+now exits safely without sending a report, Telegram message, or new prompt.
+
 ## Privacy and security
 
 - The repository contains no token or chat ID.

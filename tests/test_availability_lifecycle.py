@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import pathlib
+import subprocess
 import tempfile
 import unittest
 
@@ -106,6 +107,12 @@ class AvailabilityLifecycleTest(unittest.TestCase):
                 os.environ.pop("XDG_STATE_HOME", None)
             else:
                 os.environ["XDG_STATE_HOME"] = previous_xdg_state_home
+
+    def test_legacy_goal_command_is_a_safe_noop(self):
+        result = subprocess.run([str(MODULE_PATH.parent / "herdr-telegram-attention"), "--goal-report"], text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Managed goal reporting has been retired", result.stdout)
+        self.assertNotIn('"agent","prompt"', MODULE_PATH.read_text())
 
 
 if __name__ == "__main__":
