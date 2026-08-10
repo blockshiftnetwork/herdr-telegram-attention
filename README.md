@@ -74,11 +74,14 @@ cat > "$config_dir/.env" <<'EOF'
 TELEGRAM_BOT_TOKEN=replace-with-your-bot-token
 TELEGRAM_CHAT_ID=replace-with-your-chat-id
 TELEGRAM_LANGUAGE=es
-# Set true only if you also want a message when an agent is done.
+# Kept for backwards compatibility; managed-goal closure messages are separate.
 TELEGRAM_NOTIFY_DONE=false
 # Both are enabled by default. Set false to reduce alert context.
 TELEGRAM_INCLUDE_GIT=true
 TELEGRAM_INCLUDE_TITLE=true
+# Seconds to wait for a structured goal report before marking evidence pending.
+# Minimum 30, maximum 86400. The default is 180.
+TELEGRAM_GOAL_REPORT_TIMEOUT_SECONDS=180
 EOF
 chmod 600 "$config_dir/.env"
 ```
@@ -129,10 +132,30 @@ Manual registration remains available when automatic registration is disabled:
 herdr plugin action invoke blockshiftnetwork.telegram-attention.register-goal
 ```
 
-When a managed agent first reaches `done`, the plugin asks it for a structured
-closure report. A Telegram “Goal entregado” is sent only after the agent runs
-the requested local report command with a non-empty summary and validation
-evidence. Normal terminal panes without a detected agent are never prompted.
+When a managed agent first reaches `done`, Telegram immediately receives a
+“validando goal” message and the plugin asks that exact agent pane for a
+structured closure report. Each message includes a stable `Goal` ID plus the
+Herdr workspace, tab, and pane, so concurrent agents cannot be confused.
+
+The report command includes that Goal ID and must run in the same registered
+agent pane. A report from another pane is rejected and cannot update the wrong
+goal. If the agent does not provide a verifiable report within
+`TELEGRAM_GOAL_REPORT_TIMEOUT_SECONDS`, the original Telegram message changes
+to “evidencia pendiente”; it never remains silently stuck. A valid late report
+updates that same message to “Goal entregado” (or “requiere revisión” for
+partial/failed work). Normal terminal panes without a detected agent are never
+prompted.
+
+Goals that were already pending when upgrading remain available for a report,
+but do not generate a new timeout alert because their original Telegram
+message did not contain the stable identity fields.
+
+The automatic timeout is processed by the dispatcher, so keep it running:
+
+```bash
+herdr plugin pane open --plugin blockshiftnetwork/herdr-telegram-attention \
+  --entrypoint dispatcher --placement tab --no-focus
+```
 
 ## Privacy and security
 

@@ -39,4 +39,5 @@ test_unhandled_state_is_silent() {
 test_spanish_blocked_event
 test_non_blocked_event_is_silent
 test_unhandled_state_is_silent
+python3 "$ROOT/tests/test_goal_lifecycle.py"
 printf 'All tests passed.\n'
