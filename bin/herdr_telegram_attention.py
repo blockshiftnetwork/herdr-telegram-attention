@@ -40,9 +40,10 @@ def api(c, method, data):
     return payload["result"]
 
 def load_state():
-    if not STATE.exists(): return {"offset":0,"incidents":{}}
-    try: return json.loads(STATE.read_text())
-    except json.JSONDecodeError: return {"offset":0,"incidents":{}}
+    if not STATE.exists(): return {"offset":0,"incidents":{},"goals":{}}
+    try:
+        state=json.loads(STATE.read_text()); state.setdefault("incidents",{}); state.setdefault("goals",{}); return state
+    except json.JSONDecodeError: return {"offset":0,"incidents":{},"goals":{}}
 def save_state(state):
     STATE_DIR.mkdir(parents=True, exist_ok=True); os.chmod(STATE_DIR,0o700)
     tmp=STATE.with_suffix(".tmp"); tmp.write_text(json.dumps(state, separators=(",",":"))); os.chmod(tmp,0o600); tmp.replace(STATE)
@@ -72,6 +73,37 @@ def event_data():
                 if s.get(k) not in (None,""): return str(s[k])[:MAX_FIELD_LENGTH]
         return ""
     return {"state":get("agent_status","status","state"),"agent":get("agent","agent_name","display_agent"),"workspace":get("workspace_id","workspace"),"tab":get("tab_id","tab"),"pane":get("pane_id","pane"),"reason":get("message","reason"),"seq":get("state_change_seq","revision","sequence"),"project":get("workspace_label","project","workspace_name"),"cwd":get("foreground_cwd","workspace_cwd","cwd"),"task":get("terminal_title_stripped","terminal_title","title")}
+
+def context_data():
+    raw=json.loads(os.getenv("HERDR_PLUGIN_CONTEXT_JSON","{}"))
+    return {"pane":str(raw.get("focused_pane_id", "")), "agent":str(raw.get("focused_pane_agent", "")), "project":str(raw.get("workspace_label", "")), "task":str(raw.get("terminal_title_stripped", raw.get("tab_label", "")))}
+
+def request_goal_report(goal):
+    binary=os.getenv("HERDR_BIN_PATH", "herdr")
+    command=f"{ROOT}/bin/herdr-telegram-attention --goal-report --outcome completed --summary 'short result' --evidence 'tests or PR'"
+    prompt=("This is a managed goal. Before you finish, verify your work. If and only if it is complete, "
+            f"run this exact command with truthful summary and evidence: {command}. "
+            "Use outcome partial or failed instead of completed when appropriate.")
+    subprocess.run([binary,"agent","prompt",goal["pane"],prompt],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10,check=False)
+
+def goal_register(c):
+    d=context_data()
+    if not d["pane"] or not d["agent"]: raise RuntimeError("focus the target agent pane before registering its goal")
+    h=lock(); state=load_state(); state["goals"][d["pane"]]={**d,"phase":"assigned","registered":int(time.time())}; save_state(state); h.close()
+    print(f"goal registered for {d['agent']} in {d['pane']}")
+
+def goal_report(c, args):
+    pane=os.getenv("HERDR_PANE_ID", "")
+    if not pane: raise RuntimeError("goal reports must run inside the registered Herdr agent pane")
+    h=lock(); state=load_state(); goal=state["goals"].get(pane)
+    if not goal or goal.get("phase") != "awaiting_report": raise RuntimeError("no managed goal is awaiting a report in this pane")
+    fields=dict(zip(args[::2],args[1::2]))
+    outcome=fields.get("--outcome", ""); summary=fields.get("--summary", "")[:512]; evidence=fields.get("--evidence", "")[:512]; url=fields.get("--url", "")[:512]
+    if outcome not in ("completed","partial","failed") or not summary or not evidence: raise RuntimeError("report requires outcome, summary, and evidence")
+    label="✅ Goal entregado" if outcome=="completed" else "⚠️ Goal requiere revisión"
+    text=f"{label}\nAgente: {goal['agent']}\nProyecto: {goal['project']}\nResumen: {summary}\nEvidencia: {evidence}" + (f"\nReferencia: {url}" if url else "")
+    api(c,"sendMessage",{"chat_id":c["TELEGRAM_CHAT_ID"],"text":text[:3900]})
+    goal.update({"phase":"reported","outcome":outcome,"reported":int(time.time())}); save_state(state); h.close()
 def branch(cwd):
     try: return subprocess.check_output(["git","-C",cwd,"branch","--show-current"],text=True,stderr=subprocess.DEVNULL,timeout=2).strip()
     except Exception: return ""
@@ -113,6 +145,11 @@ def handle_event(c,d,dry=False):
         i["updated"]=now
         if dry: print(render(c,i))
         else: update_message(c,i); save_state(state)
+    elif d["state"]=="done" and d["pane"] in state["goals"]:
+        goal=state["goals"][d["pane"]]
+        if goal.get("phase")=="assigned":
+            goal["phase"]="awaiting_report"; goal["requested"]=now
+            if not dry: request_goal_report(goal); save_state(state)
     elif d["pane"]:
         for i in state["incidents"].values():
             if d["pane"] in i["agents"] and i["status"]!="resolved":
@@ -149,9 +186,11 @@ def listen(c):
 def main():
     c=config(); arg=sys.argv[1] if len(sys.argv)>1 else "--help"
     if arg=="--event": handle_event(c,event_data(),"--dry-run" in sys.argv)
+    elif arg=="--goal-register": goal_register(c)
+    elif arg=="--goal-report": goal_report(c,sys.argv[2:])
     elif arg=="--test": api(c,"sendMessage",{"chat_id":c["TELEGRAM_CHAT_ID"],"text":title(c,"test")+"\n"+title(c,"test_body")})
     elif arg=="--status": print(f"configured={bool(c.get('TELEGRAM_BOT_TOKEN') and c.get('TELEGRAM_CHAT_ID'))}\ndispatcher=run via the dispatcher pane\nlanguage={c.get('TELEGRAM_LANGUAGE')}\n")
     elif arg=="--listen": listen(c)
-    else: print("Usage: --event | --test | --status | --listen [--dry-run]"); return 2
+    else: print("Usage: --event | --goal-register | --goal-report | --test | --status | --listen [--dry-run]"); return 2
     return 0
 if __name__=="__main__": raise SystemExit(main())

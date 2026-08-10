@@ -17,6 +17,12 @@ title = "Show Telegram alert configuration status"
 contexts = ["global", "workspace", "tab", "pane"]
 command = ["bash", "bin/herdr-telegram-attention", "--status"]
 
+[[actions]]
+id = "register-goal"
+title = "Register goal for focused agent"
+contexts = ["pane"]
+command = ["bash", "bin/herdr-telegram-attention", "--goal-register"]
+
 [[events]]
 on = "pane.agent_status_changed"
 command = ["bash", "bin/herdr-telegram-attention", "--event"]
