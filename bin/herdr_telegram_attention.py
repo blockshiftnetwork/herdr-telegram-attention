@@ -5,7 +5,10 @@ import fcntl, hashlib, json, os, pathlib, re, subprocess, sys, time, urllib.pars
 PLUGIN_ID = "blockshiftnetwork.telegram-attention"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG = pathlib.Path(os.getenv("HERDR_PLUGIN_CONFIG_DIR", pathlib.Path.home()/".config/herdr/plugins/config"/PLUGIN_ID)) / ".env"
-STATE_DIR = pathlib.Path(os.getenv("HERDR_PLUGIN_STATE_DIR", CONFIG.parent/"state")); STATE = STATE_DIR / "incidents.json"
+# Herdr sets HERDR_PLUGIN_STATE_DIR for event hooks, but direct commands run
+# inside an agent pane do not receive that variable. Use Herdr's standard state
+# location as the fallback so both paths read the same managed goals.
+STATE_DIR = pathlib.Path(os.getenv("HERDR_PLUGIN_STATE_DIR", pathlib.Path(os.getenv("XDG_STATE_HOME", pathlib.Path.home()/".local/state"))/"herdr/plugins"/PLUGIN_ID)); STATE = STATE_DIR / "incidents.json"
 MAX_FIELD_LENGTH = 512
 MAX_INCIDENTS = 200
 RESOLVED_TTL_SECONDS = 7 * 24 * 60 * 60

@@ -86,6 +86,23 @@ class GoalLifecycleTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "awaiting a report"):
             plugin.goal_report(self.config, ["--goal-id", "goal-123", "--outcome", "completed", "--summary", "done", "--evidence", "tests"])
 
+    def test_direct_agent_command_uses_the_same_standard_state_fallback(self):
+        previous_state_dir = os.environ.pop("HERDR_PLUGIN_STATE_DIR", None)
+        previous_xdg_state_home = os.environ.get("XDG_STATE_HOME")
+        try:
+            os.environ["XDG_STATE_HOME"] = self.tmp.name
+            spec = importlib.util.spec_from_file_location("telegram_attention_fallback", MODULE_PATH)
+            fallback = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(fallback)
+            self.assertEqual(fallback.STATE, pathlib.Path(self.tmp.name) / "herdr" / "plugins" / fallback.PLUGIN_ID / "incidents.json")
+        finally:
+            if previous_state_dir is not None:
+                os.environ["HERDR_PLUGIN_STATE_DIR"] = previous_state_dir
+            if previous_xdg_state_home is None:
+                os.environ.pop("XDG_STATE_HOME", None)
+            else:
+                os.environ["XDG_STATE_HOME"] = previous_xdg_state_home
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

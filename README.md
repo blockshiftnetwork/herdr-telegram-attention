@@ -157,6 +157,10 @@ herdr plugin pane open --plugin blockshiftnetwork/herdr-telegram-attention \
   --entrypoint dispatcher --placement tab --no-focus
 ```
 
+The event hook and the report command share Herdr's standard plugin state
+directory. This matters because a report runs inside the agent pane, where
+Herdr does not set the event-hook state environment variable.
+
 ## Privacy and security
 
 - The repository contains no token or chat ID.
