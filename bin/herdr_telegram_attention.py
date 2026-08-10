@@ -11,8 +11,8 @@ MAX_INCIDENTS = 200
 RESOLVED_TTL_SECONDS = 7 * 24 * 60 * 60
 
 TEXT = {
- "es": {"blocked":"Herdr: requiere tu atención", "critical":"🔴 Crítica", "high":"🟠 Alta", "normal":"🟡 Decisión", "ack":"Reconocido", "snooze":"Pospuesto", "resolved":"✅ Resuelto", "agents":"agentes bloqueados", "agent":"Agente", "project":"Proyecto", "branch":"Rama", "task":"Tarea", "reason":"Motivo", "context":"Contexto", "ack_btn":"✅ Reconocer", "snooze_btn":"⏰ Posponer 30m", "context_btn":"ℹ️ Contexto", "test":"Herdr: Telegram está conectado", "test_body":"Recibirás alertas cuando un agente requiera tu atención."},
- "en": {"blocked":"Herdr: attention required", "critical":"🔴 Critical", "high":"🟠 High", "normal":"🟡 Decision", "ack":"Acknowledged", "snooze":"Snoozed", "resolved":"✅ Resolved", "agents":"blocked agents", "agent":"Agent", "project":"Project", "branch":"Branch", "task":"Task", "reason":"Reason", "context":"Context", "ack_btn":"✅ Acknowledge", "snooze_btn":"⏰ Snooze 30m", "context_btn":"ℹ️ Context", "test":"Herdr: Telegram is connected", "test_body":"You will receive alerts when an agent needs your attention."}
+ "es": {"blocked":"Herdr: requiere tu atención", "critical":"🔴 Crítica", "high":"🟠 Alta", "normal":"🟡 Decisión", "ack":"Reconocido", "snooze":"Pospuesto", "resolved":"✅ Resuelto", "agents":"agentes bloqueados", "agent":"Agente", "project":"Proyecto", "branch":"Rama", "task":"Tarea", "reason":"Motivo", "context":"Contexto", "ack_btn":"✅ Reconocer", "snooze_btn":"⏰ Posponer 30m", "context_btn":"ℹ️ Contexto", "test":"Herdr: Telegram está conectado", "test_body":"Recibirás alertas cuando un agente requiera tu atención.", "goal_pending":"🏁 Agente finalizó · validando goal"},
+ "en": {"blocked":"Herdr: attention required", "critical":"🔴 Critical", "high":"🟠 High", "normal":"🟡 Decision", "ack":"Acknowledged", "snooze":"Snoozed", "resolved":"✅ Resolved", "agents":"blocked agents", "agent":"Agent", "project":"Project", "branch":"Branch", "task":"Task", "reason":"Reason", "context":"Context", "ack_btn":"✅ Acknowledge", "snooze_btn":"⏰ Snooze 30m", "context_btn":"ℹ️ Context", "test":"Herdr: Telegram is connected", "test_body":"You will receive alerts when an agent needs your attention.", "goal_pending":"🏁 Agent finished · validating goal"}
 }
 
 def config():
@@ -102,7 +102,10 @@ def goal_report(c, args):
     if outcome not in ("completed","partial","failed") or not summary or not evidence: raise RuntimeError("report requires outcome, summary, and evidence")
     label="✅ Goal entregado" if outcome=="completed" else "⚠️ Goal requiere revisión"
     text=f"{label}\nAgente: {goal['agent']}\nProyecto: {goal['project']}\nResumen: {summary}\nEvidencia: {evidence}" + (f"\nReferencia: {url}" if url else "")
-    api(c,"sendMessage",{"chat_id":c["TELEGRAM_CHAT_ID"],"text":text[:3900]})
+    if goal.get("message_id"):
+        api(c,"editMessageText",{"chat_id":c["TELEGRAM_CHAT_ID"],"message_id":goal["message_id"],"text":text[:3900]})
+    else:
+        api(c,"sendMessage",{"chat_id":c["TELEGRAM_CHAT_ID"],"text":text[:3900]})
     goal.update({"phase":"reported","outcome":outcome,"reported":int(time.time())}); save_state(state); h.close()
 def branch(cwd):
     try: return subprocess.check_output(["git","-C",cwd,"branch","--show-current"],text=True,stderr=subprocess.DEVNULL,timeout=2).strip()
@@ -155,7 +158,10 @@ def handle_event(c,d,dry=False):
         goal=state["goals"][d["pane"]]
         if goal.get("phase")=="assigned":
             goal["phase"]="awaiting_report"; goal["requested"]=now
-            if not dry: request_goal_report(goal); save_state(state)
+            if not dry:
+                pending=f"{title(c,'goal_pending')}\nAgente: {goal['agent']}\nProyecto: {goal['project']}" + (f"\nTarea: {goal['task']}" if goal.get("task") else "")
+                goal["message_id"]=api(c,"sendMessage",{"chat_id":c["TELEGRAM_CHAT_ID"],"text":pending[:3900]})["message_id"]
+                request_goal_report(goal); save_state(state)
     elif d["pane"]:
         for i in state["incidents"].values():
             if d["pane"] in i["agents"] and i["status"]!="resolved":
