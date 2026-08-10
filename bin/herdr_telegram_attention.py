@@ -134,8 +134,10 @@ def handle_event(c,d,dry=False):
     h=lock(); state=load_state(); now=int(time.time()); prune_state(state, now)
     auto_register=c.get("TELEGRAM_AUTO_REGISTER_GOALS", "true").lower() == "true"
     goal=state["goals"].get(d["pane"])
+    auto_registered=False
     if auto_register and d["pane"] and d["agent"] and (not goal or (goal.get("phase") == "reported" and d["state"] == "working")):
         state["goals"][d["pane"]]={"pane":d["pane"],"agent":d["agent"],"project":d["project"],"task":d["task"],"phase":"assigned","registered":now,"automatic":True}
+        auto_registered=True
     if d["state"]=="blocked":
         reason=re.sub(r"\s+"," ",d["reason"].lower()).strip(); key=hashlib.sha256(f"{d['workspace']}|{reason or d['pane']}".encode()).hexdigest()[:16]
         i=next((x for x in state["incidents"].values() if x["key"]==key and x["status"]!="resolved"),None)
@@ -161,6 +163,7 @@ def handle_event(c,d,dry=False):
                 if not i["agents"]: i["status"]="resolved"
                 i["updated"]=now
                 if not dry: update_message(c,i); save_state(state)
+    if auto_registered and not dry: save_state(state)
     h.close()
 
 def callback(c,q):
