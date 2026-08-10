@@ -118,17 +118,21 @@ herdr plugin pane open --plugin blockshiftnetwork.telegram-attention \
 
 ## Managed goals
 
-Only explicitly registered agent panes receive goal automation. Focus the agent
-pane, then register it:
+By default, every detected agent pane is registered automatically. When it
+starts work after a prior delivery, it receives a new managed goal. To disable
+this for an environment, set `TELEGRAM_AUTO_REGISTER_GOALS=false` in the
+private plugin `.env`.
+
+Manual registration remains available when automatic registration is disabled:
 
 ```bash
 herdr plugin action invoke blockshiftnetwork.telegram-attention.register-goal
 ```
 
-When that agent first reaches `done`, the plugin asks it for a structured
+When a managed agent first reaches `done`, the plugin asks it for a structured
 closure report. A Telegram “Goal entregado” is sent only after the agent runs
 the requested local report command with a non-empty summary and validation
-evidence. Other agents and normal terminal panes are never prompted.
+evidence. Normal terminal panes without a detected agent are never prompted.
 
 ## Privacy and security
 
